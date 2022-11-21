@@ -3,13 +3,19 @@ const Card = require('../models/card');
 const { HttpStatusCode } = require('../utils/HttpStatusCode');
 const { HTTP404Error } = require('../errors/HTTP404Error');
 const { HTTP403Error } = require('../errors/HTTP403Error');
+const BadRequestError = require('../errors/BadRequestError');
 
 module.exports.createCard = async (req, res, next) => {
   try {
-    const card = await Card.create({ ...req.body, owner: req.user._id });
+    const { name, link } = await req.body;
+    const card = await Card.create({ name, link, owner: req.user._id });
     res.status(HttpStatusCode.OK).send(card);
   } catch (error) {
-    next(error);
+    if (error.name === 'ValidationError') {
+      next(new BadRequestError('Некоректные данные при создании карточки'));
+    } else {
+      next(error);
+    }
   }
 };
 

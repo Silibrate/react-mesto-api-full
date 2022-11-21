@@ -1,3 +1,4 @@
+/* eslint-disable consistent-return */
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
@@ -6,26 +7,39 @@ const { HttpStatusCode } = require('../utils/HttpStatusCode');
 const { HTTP401Error } = require('../errors/HTTP401Error');
 const { HTTP409Error } = require('../errors/HTTP409Error');
 const { HTTP404Error } = require('../errors/HTTP404Error');
+const BadRequestError = require('../errors/BadRequestError');
 
 const { NODE_ENV, JWT_SECRET } = process.env;
 
-module.exports.createUser = async (req, res, next) => {
-  try {
-    const hash = await bcrypt.hash(req.body.password, 10); // 𓃦 ⑰ ♡
-    const user = await User.create({ ...req.body, password: hash });
-    const {
-      name, about, avatar, _id,
-    } = user;
-    res.status(HttpStatusCode.OK).send({
-      name, about, avatar, _id,
+module.exports.createUser = (req, res, next) => {
+  const {
+    name,
+    about,
+    avatar,
+    email,
+    password,
+  } = req.body;
+
+  bcrypt.hash(password, 10)
+    .then((hash) => User.create({
+      name,
+      about,
+      avatar,
+      email,
+      password: hash,
+    }))
+    .then((user) => {
+      res.status(201).send({ data: user });
+    })
+    .catch((e) => {
+      if (e.code === 11000) {
+        return next(new HTTP409Error(`${req.body.email}Пользователь с таким email уже существует`));
+      }
+      if (e.name === 'ValidationError') {
+        return next(new BadRequestError('Ошибка валидации'));
+      }
+      return next(e);
     });
-  } catch (error) {
-    if (error.name === 'MongoServerError' || error.message.includes('11000')) {
-      next(new HTTP409Error(`${req.body.email} уже зарегестрирован`));
-      return;
-    }
-    next(error);
-  }
 };
 
 module.exports.getUsers = async (req, res, next) => {
@@ -65,26 +79,44 @@ module.exports.getUserById = async (req, res, next) => {
 
 module.exports.updateUser = async (req, res, next) => {
   try {
-    const user = await User.findByIdAndUpdate(req.user._id, req.body, {
-      new: true,
-      runValidators: true,
-    });
-    res.send(user);
-  } catch (error) {
-    next(error);
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      throw new HTTP404Error(`Пользователь с id ${req.params.id} не найден`);
+    }
+    const { name, about } = req.body;
+    const newUser = await User.findByIdAndUpdate(
+      req.user._id,
+      { name, about },
+      { new: true, runValidators: true },
+    );
+    res.send(newUser);
+  } catch (e) {
+    if (e.name === 'ValidationError' || e.name === 'CastError') {
+      return next(new BadRequestError('Ошибка валидации. Переданные данные не корректны'));
+    }
+    return next(e);
   }
 };
 
 module.exports.updateAvatar = async (req, res, next) => {
   try {
-    const { _id } = req.user;
-    const user = await User.findByIdAndUpdate(_id, req.body, {
-      new: true,
-      runValidators: true,
-    });
-    res.send(user);
-  } catch (error) {
-    next(error);
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      throw new HTTP404Error(`Пользователь с id ${req.params.id} не найден`);
+    }
+    const { avatar } = req.body;
+    const newAvatar = await User.findByIdAndUpdate(
+      req.user._id,
+      { avatar },
+      { new: true, runValidators: true },
+    );
+
+    res.send(newAvatar);
+  } catch (e) {
+    if (e.name === 'ValidationError' || e.name === 'CastError') {
+      return next(new BadRequestError('Ошибка валидации. Переданные данные не корректны'));
+    }
+    return next(e);
   }
 };
 
@@ -96,7 +128,7 @@ module.exports.login = async (req, res, next) => {
       next(new HTTP401Error('Неправильные почта или пароль'));
       return;
     }
-    const matched = bcrypt.compare(password, user.password);
+    const matched = await bcrypt.compare(password, user.password);
     if (!matched) {
       next(new HTTP401Error('Неправильные почта или пароль'));
       return;
